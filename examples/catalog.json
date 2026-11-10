@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "notice": "Fictional providers and models. Prices are made up for demonstration and do not correspond to any real service.",
+  "models": [
+    {
+      "provider": "aurora",
+      "model": "aurora-large",
+      "capabilities": { "tools": true, "vision": true, "jsonOutput": true, "maxContextTokens": 200000 },
+      "pricing": { "inputPerMillionUsd": 8.0, "outputPerMillionUsd": 24.0 },
+      "latencyClass": "slow",
+      "regions": ["us", "eu"],
+      "qualityTier": 5
+    },
+    {
+      "provider": "aurora",
+      "model": "aurora-medium",
+      "capabilities": { "tools": true, "vision": false, "jsonOutput": true, "maxContextTokens": 128000 },
+      "pricing": { "inputPerMillionUsd": 2.0, "outputPerMillionUsd": 6.0 },
+      "latencyClass": "standard",
+      "regions": ["us", "eu"],
+      "qualityTier": 4
+    },
+    {
+      "provider": "aurora",
+      "model": "aurora-lite",
+      "capabilities": { "tools": false, "vision": false, "jsonOutput": true, "maxContextTokens": 32000 },
+      "pricing": { "inputPerMillionUsd": 0.2, "outputPerMillionUsd": 0.6 },
+      "latencyClass": "fast",
+      "regions": ["us", "eu", "apac"],
+      "qualityTier": 2
+    },
+    {
+      "provider": "boreal",
+      "model": "boreal-pro",
+      "capabilities": { "tools": true, "vision": false, "jsonOutput": true, "maxContextTokens": 128000 },
+      "pricing": { "inputPerMillionUsd": 3.0, "outputPerMillionUsd": 9.0 },
+      "latencyClass": "standard",
+      "regions": ["us"],
+      "qualityTier": 4
+    },
+    {
+      "provider": "boreal",
+      "model": "boreal-mini",
+      "capabilities": { "tools": true, "vision": false, "jsonOutput": true, "maxContextTokens": 64000 },
+      "pricing": { "inputPerMillionUsd": 0.1, "outputPerMillionUsd": 0.4 },
+      "latencyClass": "fast",
+      "regions": ["us", "apac"],
+      "qualityTier": 2
+    },
+    {
+      "provider": "boreal",
+      "model": "boreal-vision",
+      "capabilities": { "tools": false, "vision": true, "jsonOutput": true, "maxContextTokens": 32000 },
+      "pricing": { "inputPerMillionUsd": 1.5, "outputPerMillionUsd": 4.5 },
+      "latencyClass": "standard",
+      "regions": ["us"],
+      "qualityTier": 3
+    },
+    {
+      "provider": "cirrus",
+      "model": "cirrus-max",
+      "capabilities": { "tools": true, "vision": true, "jsonOutput": true, "maxContextTokens": 1000000 },
+      "pricing": { "inputPerMillionUsd": 12.0, "outputPerMillionUsd": 36.0 },
+      "latencyClass": "slow",
+      "regions": ["eu"],
+      "qualityTier": 5
+    },
+    {
+      "provider": "cirrus",
+      "model": "cirrus-flash",
+      "capabilities": { "tools": true, "vision": false, "jsonOutput": true, "maxContextTokens": 128000 },
+      "pricing": { "inputPerMillionUsd": 0.4, "outputPerMillionUsd": 1.2 },
+      "latencyClass": "fast",
+      "regions": ["eu", "apac"],
+      "qualityTier": 3
+    }
+  ]
+}

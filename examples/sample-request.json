@@ -1,0 +1,11 @@
+{
+  "id": "demo-001",
+  "tenantId": "tenant-alpha",
+  "taskClass": "extract-json",
+  "requiredCapabilities": ["tools", "jsonOutput"],
+  "estimatedInputTokens": 4000,
+  "estimatedOutputTokens": 800,
+  "maxCostUsd": 0.02,
+  "maxLatencyClass": "standard",
+  "requiredRegion": "eu"
+}

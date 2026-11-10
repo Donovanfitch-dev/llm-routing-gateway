@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "name": "baseline",
+  "description": "Balanced default. Quality-first for code review, cost-first for classification, downgrade instead of rejecting when a tenant budget is tight.",
+  "weights": { "cost": 0.5, "quality": 0.3, "latency": 0.2 },
+  "fallbackDepth": 2,
+  "distinctProviderFallbacks": true,
+  "deny": [
+    {
+      "id": "deny-cirrus-for-tenant-beta",
+      "reason": "fictional contractual restriction: tenant-beta may not use cirrus",
+      "match": { "provider": "cirrus", "tenantId": "tenant-beta" }
+    },
+    {
+      "id": "deny-boreal-mini-for-extraction",
+      "reason": "fictional evaluation finding: unreliable structured extraction",
+      "match": { "model": "boreal-mini", "taskClass": "extract-json" }
+    }
+  ],
+  "taskOverrides": {
+    "code-review": {
+      "weights": { "cost": 0.1, "quality": 0.8, "latency": 0.1 },
+      "minQualityTier": 4
+    },
+    "classify": {
+      "weights": { "cost": 0.7, "quality": 0.1, "latency": 0.2 }
+    },
+    "extract-json": {
+      "minQualityTier": 3
+    },
+    "vision-describe": {
+      "minQualityTier": 3
+    }
+  },
+  "budget": {
+    "windowSeconds": 86400,
+    "defaultLimitUsd": 1.0,
+    "tenantLimitsUsd": { "tenant-gamma": 0.05 },
+    "onExceed": "downgrade"
+  },
+  "breaker": {
+    "failureThreshold": 3,
+    "openDurationMs": 300000,
+    "halfOpenMaxProbes": 1
+  }
+}

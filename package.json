@@ -1,0 +1,46 @@
+{
+  "name": "llm-routing-gateway",
+  "version": "0.1.0",
+  "description": "A policy-driven model router with explainable decisions, fallbacks, circuit breakers and a replay harness. Independent reference implementation with fictional providers.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "llm-route": "dist/cli/route.js",
+    "llm-replay": "dist/cli/replay.js"
+  },
+  "files": [
+    "dist",
+    "examples",
+    "docs"
+  ],
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json",
+    "route": "tsx src/cli/route.ts",
+    "replay": "tsx src/cli/replay.ts",
+    "generate:log": "tsx examples/generate-sample-log.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.14.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^5.1.0"
+  }
+}
