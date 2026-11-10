@@ -30,7 +30,7 @@ import {
   type RoutingPolicy,
   type Weights,
 } from './types.js';
-import { compareStrings, roundTo, routeId } from './util.js';
+import { compareStrings, ownValue, roundTo, routeId } from './util.js';
 
 const LATENCY_ORDER: Record<LatencyClass, number> = { fast: 0, standard: 1, slow: 2 };
 const LATENCY_SCORE: Record<LatencyClass, number> = { fast: 1, standard: 0.5, slow: 0 };
@@ -69,7 +69,7 @@ function evaluate(
     eliminations.push({ code: 'PROVIDER_NOT_ALLOWED', detail: `task class allows only: ${allowProviders.join(', ')}` });
   }
   for (const cap of request.requiredCapabilities) {
-    if (!model.capabilities[cap]) eliminations.push({ code: 'MISSING_CAPABILITY', detail: `lacks ${cap}` });
+    if (model.capabilities[cap] !== true) eliminations.push({ code: 'MISSING_CAPABILITY', detail: `lacks ${cap}` });
   }
   const neededContext = request.estimatedInputTokens + request.estimatedOutputTokens;
   if (neededContext > model.capabilities.maxContextTokens) {
@@ -154,7 +154,7 @@ export function routeRequest(
   catalog: Catalog,
   context: RoutingContext = {},
 ): RoutingDecision {
-  const override = policy.taskOverrides[request.taskClass];
+  const override = ownValue(policy.taskOverrides, request.taskClass);
   const weights = override?.weights ?? policy.weights;
   const minQualityTier = override?.minQualityTier ?? 1;
   const fallbackDepth = override?.fallbackDepth ?? policy.fallbackDepth;
@@ -209,16 +209,20 @@ export function routeRequest(
       remainingUsd: remaining,
       estimatedCostUsd: first.estimatedCostUsd,
       downgradedFrom: null,
-      excludedRoutes: [],
+      excluded: [],
     };
+    // Every ranked route over the remaining budget is excluded from the primary slot
+    // AND from the fallback chain, so a fallback can never overshoot the window.
+    const affordable = ranking.filter((r) => r.estimatedCostUsd <= remaining);
+    budget.excluded = ranking
+      .filter((r) => r.estimatedCostUsd > remaining)
+      .map((r) => ({ route: r.route, estimatedCostUsd: r.estimatedCostUsd, code: 'EXCEEDS_REMAINING_BUDGET' as const }));
+    selectable = affordable;
     if (first.estimatedCostUsd > remaining) {
-      const affordable = ranking.filter((r) => r.estimatedCostUsd <= remaining);
-      budget.excludedRoutes = ranking.filter((r) => r.estimatedCostUsd > remaining).map((r) => r.route);
       const best = affordable[0];
       if (policy.budget.onExceed === 'downgrade' && best) {
         budget.outcome = 'downgraded';
         budget.downgradedFrom = first.route;
-        selectable = affordable;
       } else {
         budget.outcome = 'rejected';
         const reason: DecisionReason = {

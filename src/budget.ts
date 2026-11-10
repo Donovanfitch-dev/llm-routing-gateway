@@ -7,7 +7,7 @@
 
 import type { BudgetPolicy, BudgetSnapshot } from './types.js';
 import type { Clock } from './util.js';
-import { roundTo } from './util.js';
+import { ownValue, roundTo } from './util.js';
 
 export class BudgetTracker {
   private readonly windowMs: number;
@@ -21,7 +21,7 @@ export class BudgetTracker {
   }
 
   limitFor(tenantId: string): number {
-    return this.policy.tenantLimitsUsd[tenantId] ?? this.policy.defaultLimitUsd;
+    return ownValue(this.policy.tenantLimitsUsd, tenantId) ?? this.policy.defaultLimitUsd;
   }
 
   snapshot(tenantId: string): BudgetSnapshot {

@@ -1,5 +1,5 @@
 /**
- * Hand-written validators for catalog, policy and request documents.
+ * Custom validators (no schema library) for catalog, policy and request documents.
  *
  * Validators never stop at the first problem: they collect every issue with a
  * JSON-path style location so a bad file can be fixed in one pass. Unknown
@@ -23,7 +23,7 @@ import {
   type TaskOverride,
   type Weights,
 } from './types.js';
-import { routeId } from './util.js';
+import { dictionary, routeId } from './util.js';
 
 export class ConfigError extends Error {
   readonly issues: readonly string[];
@@ -288,7 +288,7 @@ export function validatePolicy(raw: unknown, catalog?: Catalog): RoutingPolicy {
       });
     }
 
-    const overrides: Record<string, TaskOverride> = {};
+    const overrides = dictionary<TaskOverride>();
     if (root['taskOverrides'] !== undefined) {
       const obj = c.record(root['taskOverrides'], '$.taskOverrides', Object.keys(isRecord(root['taskOverrides']) ? root['taskOverrides'] : {}));
       if (obj) {
@@ -388,11 +388,12 @@ function parseBudget(c: Checker, value: unknown, path: string): BudgetPolicy | u
   const windowSeconds = c.number(obj['windowSeconds'], `${path}.windowSeconds`, { integer: true, exclusiveMin: 0 });
   const defaultLimitUsd = c.number(obj['defaultLimitUsd'], `${path}.defaultLimitUsd`, { min: 0 });
   const onExceed: BudgetAction | undefined = c.oneOf(obj['onExceed'], `${path}.onExceed`, ['reject', 'downgrade'] as const);
-  const tenantLimitsUsd: Record<string, number> = {};
+  const tenantLimitsUsd = dictionary<number>();
   if (obj['tenantLimitsUsd'] !== undefined) {
     const limits = c.record(obj['tenantLimitsUsd'], `${path}.tenantLimitsUsd`, Object.keys(isRecord(obj['tenantLimitsUsd']) ? obj['tenantLimitsUsd'] : {}));
     if (limits) {
       for (const [tenant, v] of Object.entries(limits)) {
+        if (!NAME.test(tenant)) c.add(`${path}.tenantLimitsUsd.${tenant}`, 'tenant id is not valid');
         const n = c.number(v, `${path}.tenantLimitsUsd.${tenant}`, { min: 0 });
         if (n !== undefined) tenantLimitsUsd[tenant] = n;
       }

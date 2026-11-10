@@ -103,7 +103,7 @@ export function runRoute(argv: readonly string[], io: IO = processIO): number {
     let budget;
     if (policy.budget) {
       const tracker = new BudgetTracker(policy.budget, () => 0);
-      const spent = parseNumberFlag('spent', v.spent);
+      const spent = parseNumberFlag('spent', v.spent, 0);
       if (spent !== undefined) tracker.record(request.tenantId, spent);
       budget = tracker.snapshot(request.tenantId);
     }

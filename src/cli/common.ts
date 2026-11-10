@@ -52,9 +52,10 @@ export class UsageError extends Error {
   }
 }
 
-export function parseNumberFlag(name: string, value: string | undefined): number | undefined {
+export function parseNumberFlag(name: string, value: string | undefined, min?: number): number | undefined {
   if (value === undefined) return undefined;
   const n = Number(value);
   if (value.trim() === '' || !Number.isFinite(n)) throw new UsageError(`--${name} expects a number, got ${JSON.stringify(value)}`);
+  if (min !== undefined && n < min) throw new UsageError(`--${name} must be >= ${min}, got ${value}`);
   return n;
 }

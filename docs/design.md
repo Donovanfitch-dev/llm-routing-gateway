@@ -73,13 +73,13 @@ After ranking (and after the budget gate), the chain is the next `fallbackDepth`
 
 Budgets are per tenant over fixed windows aligned to the epoch (`[k*W, (k+1)*W)`). Fixed windows are simple and predictable but allow a burst at a boundary (a tenant can spend a full limit at the end of one window and again at the start of the next). A sliding window or token bucket would smooth that and is a natural extension.
 
-The gate is applied *after* ranking using the estimated cost of the best-ranked route:
+The gate is applied *after* ranking. Every ranked route whose estimate exceeds the remaining budget is excluded from the primary slot **and from the fallback chain**; otherwise a fallback served after a primary failure could overshoot the window. Each exclusion is recorded in `decision.budget.excluded` with the route, its estimate and the code `EXCEEDS_REMAINING_BUDGET`. The outcome then depends on the best-ranked route's estimate:
 
 - fits: proceed;
 - over and `onExceed: "reject"`: status `rejected`, reason `BUDGET_EXCEEDED`;
 - over and `onExceed: "downgrade"`: drop routes whose estimate exceeds what remains, take the best of the rest; if none is affordable, reject.
 
-A downgrade chooses the highest-*scoring* affordable route, not the cheapest, so the tenant gets the best service its remaining budget can buy. The decision records `downgradedFrom` and the routes excluded for budget reasons.
+A downgrade chooses the highest-*scoring* affordable route, not the cheapest, so the tenant gets the best service its remaining budget can buy. The decision records `downgradedFrom` and the excluded routes.
 
 Spend is charged from *actual* usage after a successful call; the estimate is used only for the gate. Two consequences: concurrent in-flight requests do not see each other's pending cost, so a window can be overshot; and failed calls cost nothing. Reserving estimated cost up front and reconciling afterwards would fix the first at the price of more state.
 
@@ -90,7 +90,7 @@ The gateway walks `[primary, ...fallbacks]`:
 - success: stop;
 - retryable error or timeout: record, count a failure against the provider's breaker, continue;
 - non-retryable error: record, stop. The request is at fault; another model would fail the same way or mask a bug. The provider did respond, so the breaker is credited with a success (this also releases a half-open probe slot);
-- unexpected exception: treated as non-retryable. Failing closed avoids retry storms from an unknown fault.
+- unclassified exception (anything that is not a `ProviderError`): treated as a retryable provider failure, recorded with code `UNKNOWN`, and counted against the breaker. A plain `Error` from an adapter is most often a transport fault (reset connection, DNS), so falling back is the useful behavior, and `fallbackDepth` bounds the cost of being wrong. An adapter that wants to stop the walk must say so with `ProviderError(code, message, false)`. An earlier version failed closed here and credited the breaker with a success, which let a dead provider keep its breaker closed forever.
 
 There is no retry of the *same* route. Within-route retries and hedged requests interact with timeouts and idempotency in ways that are better decided per adapter.
 
@@ -111,7 +111,7 @@ Tuning guidance: choose the threshold and cool-down from the cost of a failed at
 
 ## 6. The decision log
 
-One JSON object per line: `{ schemaVersion, timestamp, request, decision, outcome }`. JSONL because it is append-friendly, streamable, grep-able, and survives a truncated final line without corrupting earlier ones. The reader names the line number of any malformed record.
+One JSON object per line: `{ schemaVersion, timestamp, request, decision, outcome }`. JSONL because it is append-friendly, streamable, and grep-able. A crash mid-append can leave a truncated final line; earlier lines remain intact, but the reader does **not** skip a bad line: it fails the whole read with an error naming the line number (and, for a shape problem, the field path), and the replay CLI exits with code 2. Every record is validated completely on read (decision candidates, eliminations, ranking, budget block and outcome attempts, plus the cross-check that a routed decision's primary appears in its ranking), so replay never meets a malformed shape. Repairing a truncated tail is left to the operator.
 
 The decision is stored in full (all candidates and eliminations), which is verbose: the bundled 32-record log is about 100 KB. A production system would likely store the decision compactly and re-derive the explanation from the stored policy and catalog versions on demand, which this design supports (because routing is pure) but does not implement.
 
@@ -126,21 +126,22 @@ Design decisions:
 - **Baseline is the recording, not a re-run.** The comparison is "what happened" versus "what would happen". Replaying the recorded policy against the recorded log produces zero changes, which a test asserts; that is a determinism check on the whole pipeline, including budgets.
 - **Breaker state is replayed from the record.** Each record's `decision.context.openProviders` is passed to the candidate. Otherwise every request that overlapped an outage would show up as a spurious diff, or a real fragility (a policy with no redundant provider) would be masked. Using the recorded state attributes differences to the policy.
 - **Budgets are re-simulated** from log timestamps with a fresh tracker, because the candidate may make different spend decisions. Only requests that originally succeeded are charged. If the candidate keeps the same primary the recorded actual cost is charged (so fallbacks that really happened are preserved); otherwise the candidate's estimate is charged. This is an approximation and is labeled as such.
-- **Cost delta covers comparable requests only.** A request that became unroutable would otherwise look like a cost saving. Newly unroutable and newly routable requests are counted separately.
+- **Cost delta covers comparable requests only.** A request that became unroutable would otherwise look like a cost saving. Newly unroutable and newly routable requests are counted separately. With a zero baseline the percentage is undefined: it is reported as `null` (`n/a, zero baseline` in text) when the cost rose, and `--max-cost-increase-pct` then fails; the absolute-dollar limit is the tool for that case.
+- **Known limits of the comparison.** Only the primary route is compared, so a candidate that changes fallback chains but not primaries shows no diff. Budget rejections are counted in the same bucket as unroutable requests (the entry carries the reason code). Per-class `unchanged` excludes requests unroutable on both sides, matching the totals; those appear as `stillUnroutable`.
 - **Thresholds are explicit and optional**: newly unroutable count (default 0 in the CLI), changed-primary percentage, cost increase in percent and in dollars. A violated threshold sets a non-zero exit code. Thresholds are configuration of the *gate*, not of the policy.
 
 What replay proves and does not: see the README. In short, it proves routing consequences given recorded descriptors, and says nothing about response quality, real latency, real availability, or demand response.
 
 ## 8. Validation
 
-Validators are hand-written to keep the dependency count at zero and to control messages. Principles:
+Validators are written without a schema library to keep the dependency count at zero and to control messages. Principles:
 
 - collect all problems, never just the first, each with a JSON-path-like location;
 - reject unknown keys, because a misspelled optional field otherwise silently does nothing;
 - check cross-references when a catalog is available (a deny rule naming a provider that does not exist is almost certainly a typo);
 - return fresh, normalized objects (defaults applied) rather than the raw input.
 
-The cost of hand-written validation is repetition; the benefit is that error text is exactly as clear as it is made to be.
+The cost of custom validation is repetition; the benefit is that error text is exactly as clear as it is made to be.
 
 ## 9. Testing strategy
 

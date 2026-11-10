@@ -2,7 +2,7 @@
 
 A policy-driven model router with **explainable decisions**, **fallbacks with circuit breakers**, **tenant budgets**, and a **replay harness** that regression-tests routing changes against recorded traffic before they ship.
 
-> This is an independent reference implementation, written from scratch for demonstration; not extracted from any production system. Built with AI coding assistance (Claude Code).
+> This is an independent reference implementation, written from scratch for demonstration; not extracted from any production system. Implemented with AI coding agents (Claude Code).
 >
 > All providers (`aurora`, `boreal`, `cirrus`), models, regions, tenants and **prices are fictional**. Prices are made up and exist only so that cost-based ranking has numbers to work with. No network calls are made anywhere; provider adapters are in-process mocks behind an interface that a real SDK could implement. The repository has zero runtime dependencies.
 
@@ -23,12 +23,12 @@ This project treats model choice as a **policy evaluated against a catalog**, th
 - **Model catalog as data** with validation: provider, model id, capabilities (tools, vision, JSON output, max context), per-million-token input/output prices, latency class, region tags, quality tier.
 - **Request descriptor**: required capabilities, estimated input/output tokens, max cost, slowest acceptable latency class, required region, tenant id, task class.
 - **Routing policy as JSON**: hard-constraint filtering, then ranking by weighted cost/quality/latency; per-task-class overrides (weights, quality floor, provider allow-list, fallback depth); explicit deny rules; deterministic tie-breaking.
-- **Validation on load** with hand-written validators (no schema library). Every problem is reported with a JSON path; unknown keys are rejected; policy references to unknown providers or models are caught against the catalog.
+- **Validation on load** with custom validators (no schema library). Every problem is reported with a JSON path; unknown keys are rejected; policy references to unknown providers or models are caught against the catalog.
 - **Explainable decisions**: every catalog entry is listed, every elimination carries one or more reason codes, the full ranking with score components is recorded, along with the chosen route and the ordered fallback chain. Same inputs, byte-identical decision.
-- **Execution with fallback**: try the primary; on a retryable error or timeout move down the chain; a non-retryable error stops the walk.
+- **Execution with fallback**: try the primary; on a retryable error, timeout or unclassified exception move down the chain; an adapter-declared non-retryable error stops the walk.
 - **Per-provider circuit breaker** (closed / open / half-open) with an injectable clock. Open providers are excluded from routing and the exclusion is recorded in the decision.
-- **Tenant budgets** per fixed time window; an over-budget request is rejected or downgraded to the best affordable route, with the reason recorded.
-- **Decision log**: append-only JSONL of request, decision and outcome.
+- **Tenant budgets** per fixed time window; an over-budget request is rejected or downgraded to the best affordable route, with the reason recorded. Routes whose estimate exceeds what remains are excluded from the fallback chain too, and each exclusion is recorded.
+- **Decision log**: append-only JSONL of request, decision and outcome. Records are fully validated on read, so a malformed line is reported with its line number and field path (exit code 2 in the replay CLI).
 - **Replay harness**: re-route a recorded log against a candidate policy and/or catalog **without executing anything**, and get a diff (changed primaries, newly unroutable requests, estimated cost delta, per-task-class summary). Thresholds turn it into a CI gate via the exit code.
 - **CLI**: `route` and `replay`, via `tsx` during development or as built bins.
 
@@ -47,9 +47,9 @@ flowchart TD
     D -- "yes" --> E["Score: weighted cost, quality, latency"]
     E --> F["Rank with deterministic tie-breaks"]
     F --> G{"Budget gate"}
-    G -- "fits" --> H["Build fallback chain"]
-    G -- "over budget, policy downgrade" --> I["Keep only affordable routes"]
-    I --> H
+    G -- "best route fits" --> I["Drop routes over the remaining budget, primary and fallbacks alike"]
+    G -- "over budget, policy downgrade" --> I
+    I --> H["Build fallback chain"]
     G -- "over budget, policy reject" --> R["Decision: rejected"]
     H --> J["Decision record: candidates, eliminations, ranking, primary, fallbacks"]
 ```
@@ -106,14 +106,14 @@ stateDiagram-v2
     HalfOpen --> Open: probe fails
 ```
 
-Only *availability* failures (retryable errors and timeouts) count against a breaker. A non-retryable error means the provider answered and the request was at fault, so it stops the walk and is treated as proof of liveness.
+Only *availability* failures count against a breaker: retryable errors, timeouts, and exceptions the adapter did not classify (a plain `Error` is most likely a transport fault, so it falls back and counts as a failure). An adapter that explicitly throws `ProviderError` with `retryable: false` means the provider answered and the request was at fault, so it stops the walk and is treated as proof of liveness.
 
 ### Modules
 
 | Module | Responsibility |
 | --- | --- |
 | `src/types.ts` | all data shapes (catalog, policy, request, decision, outcome, log record) |
-| `src/validate.ts`, `src/load.ts` | hand-written validators and file loaders |
+| `src/validate.ts`, `src/load.ts` | custom validators (no schema library) and file loaders |
 | `src/router.ts` | pure routing pipeline |
 | `src/breaker.ts` | circuit breaker and per-provider registry |
 | `src/budget.ts` | per-tenant windowed spend tracker |
@@ -205,6 +205,7 @@ Policy    baseline  override=code-review  weights cost=0.1 quality=0.8 latency=0
 Breakers  open: aurora
 Status    routed
 Budget    downgraded  limit=$0.050000 spent=$0.010000 remaining=$0.040000 estimate=$0.151200  downgraded from cirrus/cirrus-max
+          excluded cirrus/cirrus-max (est $0.151200 > remaining $0.040000) from primary and fallbacks [EXCEEDS_REMAINING_BUDGET]
 Primary   boreal/boreal-pro
 Fallbacks (none)
 
@@ -354,7 +355,7 @@ Short version here; the longer reasoning is in [`docs/design.md`](docs/design.md
 
 - **Policy as data vs. code.** Data can be diffed, reviewed, validated at load, versioned, and replayed against history. The cost is expressiveness: there are no arbitrary predicates, only the rule shapes the engine understands. That ceiling is deliberate; a policy that is code cannot be safely evaluated against old traffic by a third party.
 - **Determinism.** The router has no hidden inputs, scores are rounded, and ties break on explicit keys ending in the route id. This makes decisions reproducible, diffable, and testable as snapshots. The price is that "soft" behaviors such as load spreading or random canarying must be expressed as explicit inputs, not as dice rolls inside the router.
-- **Estimating cost before execution.** Routing happens before output length is known, so cost is computed from caller-supplied token estimates. Underestimates let a request through that costs more than predicted; the gateway therefore charges *actual* usage to the budget afterwards, and the budget gate is a soft guard, not a hard cap. Concurrent requests can overshoot a window.
+- **Estimating cost before execution.** Routing happens before output length is known, so cost is computed from caller-supplied token estimates. Underestimates let a request through that costs more than predicted; the gateway therefore charges the *actual* usage the adapter reports to the budget afterwards, and the budget gate is a soft guard, not a hard cap. Concurrent requests can overshoot a window. Every route in the primary slot and the fallback chain must fit the remaining budget by its estimate.
 - **Breaker tuning.** A low failure threshold or long cool-down protects callers from a failing provider but sheds capacity from a provider that is merely flaky; a high threshold or short cool-down does the reverse. Only availability failures count, a single probe is admitted in half-open state, and open providers are removed at routing time so the fallback chain is built from providers that can actually be tried. Defaults here are illustrative, not recommendations.
 - **What replay can and cannot prove.** It can show which requests would route differently, which would become unroutable or rejected, and the *estimated* cost delta, using deterministic re-evaluation of recorded descriptors. It cannot show response quality, real latency, real provider availability, the accuracy of token estimates, cache behavior, or how traffic would change if routing changed. Budget behavior is a simulation: the original run's spend is approximated from the log, so budget-driven differences deserve a second look.
 
@@ -362,17 +363,18 @@ Short version here; the longer reasoning is in [`docs/design.md`](docs/design.md
 
 | Area | Status |
 | --- | --- |
-| Model catalog, request descriptor, policy: types and hand-written validators | Implemented and tested |
+| Model catalog, request descriptor, policy: types and custom validators (no schema library) | Implemented and tested |
 | Hard-constraint filtering with reason codes, weighted ranking, deterministic tie-breaking | Implemented and tested |
 | Deny rules, per-task-class overrides (weights, quality floor, provider allow-list, fallback depth) | Implemented and tested |
 | Explainable, deterministic decision record | Implemented and tested |
-| Execution with fallback; retryable vs non-retryable errors; timeouts | Implemented and tested |
+| Execution with fallback; retryable, non-retryable and unclassified errors; timeouts | Implemented and tested |
 | Circuit breaker (closed / open / half-open, injectable clock), skips recorded in the decision | Implemented and tested |
 | Per-tenant windowed budgets with reject / downgrade | Implemented and tested |
 | JSONL decision log writer and reader | Implemented and tested |
 | Replay harness, diff report, threshold exit codes | Implemented and tested |
 | `route` and `replay` CLIs (via `tsx` and built bins) | Implemented and tested (CLI logic is unit tested; the built bins were run once during the build and have no automated test) |
 | Budget re-simulation inside replay | Prototype (approximates the original spend from the log) |
+| Replay of fallback-chain changes; separate reporting of budget rejections | Conceptual, not implemented (replay compares primary routes only, and counts budget rejections under "newly unroutable") |
 | Cost-before-execution from caller-supplied token estimates | Prototype (no tokenizer, no estimate calibration) |
 | Mock provider adapters | Prototype (scripted behaviors only) |
 | Real provider SDK adapters | Conceptual, not implemented |
@@ -390,7 +392,10 @@ Short version here; the longer reasoning is in [`docs/design.md`](docs/design.md
 - **Single-process state.** Breaker state and budget windows live in memory. Two gateway processes would each keep their own view.
 - **Token counts are estimates supplied by the caller.** There is no tokenizer. The mock adapters echo the estimates back as "usage".
 - **No retries on the same route, no hedged requests, no rate limiting or concurrency control.**
-- **Unknown errors are treated as non-retryable** (fail closed) rather than risking a retry storm.
+- **Unclassified exceptions are treated as retryable provider failures.** Adapters should throw `ProviderError` with the right `retryable` flag; anything else falls back and counts against the breaker. Fallback depth bounds the cost of being wrong.
+- **Replay compares primary routes only.** A candidate policy that shortens or reorders fallback chains, but leaves primaries alone, shows no diff. Budget rejections are counted under "newly unroutable" together with requests that no model can serve; the per-request entry says which reason applied.
+- **Cost normalisation is relative.** Cost scores are min-max normalised within the eligible set, so one very expensive eligible model compresses the cost differences between all cheaper ones toward 1 and lets quality and latency dominate among them (see `docs/design.md`).
+- **Replay percent gate with a zero baseline.** If the comparable baseline cost is $0 and the candidate cost is higher, the percent increase is undefined: the report shows `n/a, zero baseline` and `--max-cost-increase-pct` fails; use `--max-cost-increase-usd` for an absolute limit.
 - **Timeouts use real timers.** Everything else that depends on time (breakers, budgets, log timestamps) uses the injectable clock.
 - **The sample log is synthetic.** It was produced by running the gateway against scripted mock providers; it is not real traffic.
 

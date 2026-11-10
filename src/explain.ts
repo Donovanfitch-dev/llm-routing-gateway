@@ -28,6 +28,9 @@ export function formatDecision(request: RequestDescriptor, decision: RoutingDeci
       `Budget    ${b.outcome}  limit=${usd(b.limitUsd)} spent=${usd(b.spentUsd)} remaining=${usd(b.remainingUsd)} estimate=${usd(b.estimatedCostUsd)}` +
         (b.downgradedFrom ? `  downgraded from ${b.downgradedFrom}` : ''),
     );
+    for (const x of b.excluded) {
+      lines.push(`          excluded ${x.route} (est ${usd(x.estimatedCostUsd)} > remaining ${usd(b.remainingUsd)}) from primary and fallbacks [${x.code}]`);
+    }
   }
   if (decision.primary) {
     lines.push(`Primary   ${decision.primary}`);

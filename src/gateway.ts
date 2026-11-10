@@ -15,7 +15,7 @@ import type { LogSink } from './log.js';
 import { ProviderError, type ProviderAdapter } from './providers.js';
 import { estimateCostUsd, providerOf, routeRequest } from './router.js';
 import type { Attempt, Catalog, LogRecord, ModelEntry, Outcome, RequestDescriptor, RoutingPolicy } from './types.js';
-import { roundTo, routeId, systemClock, type Clock } from './util.js';
+import { ownValue, roundTo, routeId, systemClock, type Clock } from './util.js';
 
 export interface GatewayOptions {
   catalog: Catalog;
@@ -36,7 +36,16 @@ function withTimeout<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): P
       controller.abort();
       reject(new ProviderError('TIMEOUT', `no response within ${ms}ms`, true));
     }, ms);
-    run(controller.signal).then(
+    let pending: Promise<T>;
+    try {
+      pending = run(controller.signal);
+    } catch (error) {
+      // A synchronous throw must not leave the timer armed.
+      clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    pending.then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
@@ -85,7 +94,7 @@ export class Gateway {
     if (decision.status === 'routed' && decision.primary !== null) {
       for (const route of [decision.primary, ...decision.fallbacks]) {
         const model = this.modelsByRoute.get(route);
-        const adapter = this.providers[providerOf(route)];
+        const adapter = ownValue(this.providers, providerOf(route));
         if (!model || !adapter) {
           outcome.attempts.push(skipped(route, 'NO_ADAPTER'));
           continue;
@@ -119,7 +128,7 @@ export class Gateway {
           this.budget?.record(request.tenantId, outcome.actualCostUsd);
           break;
         } catch (error) {
-          const failure = error instanceof ProviderError ? error : new ProviderError('UNKNOWN', error instanceof Error ? error.message : String(error), false);
+          const failure = error instanceof ProviderError ? error : new ProviderError('UNKNOWN', error instanceof Error ? error.message : String(error), true);
           outcome.attempts.push({
             route,
             status: failure.code === 'TIMEOUT' ? 'timeout' : 'error',

@@ -172,16 +172,26 @@ export interface BudgetSnapshot {
 
 export type BudgetOutcome = 'within_budget' | 'downgraded' | 'rejected';
 
+export interface BudgetExclusion {
+  route: RouteId;
+  estimatedCostUsd: number;
+  code: 'EXCEEDS_REMAINING_BUDGET';
+}
+
 export interface BudgetDecision {
   outcome: BudgetOutcome;
   limitUsd: number;
   spentUsd: number;
   remainingUsd: number;
+  /** Estimate for the best-ranked eligible route, before any downgrade. */
   estimatedCostUsd: number;
   /** Set when the budget changed the primary route. */
   downgradedFrom: RouteId | null;
-  /** Ranked routes dropped because their estimate exceeded the remaining budget. */
-  excludedRoutes: RouteId[];
+  /**
+   * Ranked routes dropped from both the primary slot and the fallback chain
+   * because their estimate exceeds what remains in the tenant's window.
+   */
+  excluded: BudgetExclusion[];
 }
 
 export type DecisionStatus = 'routed' | 'unroutable' | 'rejected';

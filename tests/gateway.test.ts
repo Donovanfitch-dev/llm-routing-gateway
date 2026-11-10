@@ -83,15 +83,37 @@ describe('execution with fallback', () => {
     expect(rec.outcome.attempts).toHaveLength(3);
   });
 
-  it('treats an unexpected thrown error as non-retryable', async () => {
+  it('treats an unclassified exception as a retryable provider failure', async () => {
     const { gateway } = setup({
       aurora: () => {
-        throw new Error('boom');
+        throw new Error('socket hang up');
       },
     });
     const rec = await gateway.handle(request);
+    expect(rec.outcome.status).toBe('success');
+    expect(rec.outcome.servedBy).toBe('boreal/b1');
+    expect(rec.outcome.attempts[0]).toMatchObject({ route: 'aurora/a1', status: 'error', errorCode: 'UNKNOWN', retryable: true });
+  });
+
+  it('counts unclassified exceptions against the circuit breaker', async () => {
+    const { gateway } = setup({
+      aurora: () => {
+        throw new Error('socket hang up');
+      },
+    });
+    await gateway.handle(request);
+    await gateway.handle(request); // failureThreshold is 2
+    expect(gateway.breakers.get('aurora').state).toBe('open');
+    const third = await gateway.handle(request);
+    expect(third.decision.context.openProviders).toEqual(['aurora']);
+    expect(third.decision.primary).toBe('boreal/b1');
+  });
+
+  it('resets nothing on a plain exception: a classified non-retryable error still stops the walk', async () => {
+    const { gateway } = setup({ aurora: () => ({ kind: 'error', code: 'BAD_INPUT', retryable: false }) });
+    const rec = await gateway.handle(request);
     expect(rec.outcome.status).toBe('failed');
-    expect(rec.outcome.attempts[0]).toMatchObject({ errorCode: 'UNKNOWN', retryable: false });
+    expect(rec.outcome.attempts).toHaveLength(1);
   });
 
   it('skips routes with no registered adapter', async () => {
@@ -150,7 +172,7 @@ describe('budgets and logging', () => {
     const first = await gateway.handle(request); // a1 costs $0.02
     expect(first.decision.budget?.outcome).toBe('within_budget');
     const second = await gateway.handle(request); // $0.02 > $0.01 remaining -> best affordable is b1 ($0.01)
-    expect(second.decision.budget).toMatchObject({ outcome: 'downgraded', downgradedFrom: 'aurora/a1', excludedRoutes: ['aurora/a1'] });
+    expect(second.decision.budget).toMatchObject({ outcome: 'downgraded', downgradedFrom: 'aurora/a1', excluded: [expect.objectContaining({ route: 'aurora/a1', code: 'EXCEEDS_REMAINING_BUDGET' })] });
     expect(second.outcome.servedBy).toBe('boreal/b1');
     expect(gateway.budget?.snapshot('tenant-a').spentUsd).toBe(0.03);
     const third = await gateway.handle(request); // window exhausted: nothing is affordable

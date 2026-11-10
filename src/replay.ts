@@ -56,6 +56,7 @@ export interface TaskClassSummary {
   changedPrimary: number;
   newlyUnroutable: number;
   newlyRoutable: number;
+  stillUnroutable: number;
   baselineCostUsd: number;
   candidateCostUsd: number;
   costDeltaUsd: number;
@@ -78,7 +79,8 @@ export interface ReplayReport {
     baselineUsd: number;
     candidateUsd: number;
     deltaUsd: number;
-    deltaPct: number;
+    /** Percent change over comparable requests; null when the baseline is zero and the cost rose (unbounded). */
+    deltaPct: number | null;
   };
   byTaskClass: Record<string, TaskClassSummary>;
   changes: RouteChange[];
@@ -107,6 +109,7 @@ function emptySummary(): TaskClassSummary {
     changedPrimary: 0,
     newlyUnroutable: 0,
     newlyRoutable: 0,
+    stillUnroutable: 0,
     baselineCostUsd: 0,
     candidateCostUsd: 0,
     costDeltaUsd: 0,
@@ -124,7 +127,8 @@ export function replay(
   const tracker = simulate && candidatePolicy.budget ? new BudgetTracker(candidatePolicy.budget, () => simulatedNow) : undefined;
 
   const totals = { requests: 0, unchanged: 0, changedPrimary: 0, newlyUnroutable: 0, newlyRoutable: 0, stillUnroutable: 0 };
-  const byTaskClass: Record<string, TaskClassSummary> = {};
+  // A Map, not an object: task class names are user data and may be "constructor" or "toString".
+  const byTaskClass = new Map<string, TaskClassSummary>();
   const changes: RouteChange[] = [];
   const newlyUnroutable: NewlyUnroutable[] = [];
   let comparable = 0;
@@ -142,7 +146,11 @@ export function replay(
       ...(tracker ? { budget: tracker.snapshot(request.tenantId) } : {}),
     });
 
-    const summary = (byTaskClass[request.taskClass] ??= emptySummary());
+    let summary = byTaskClass.get(request.taskClass);
+    if (!summary) {
+      summary = emptySummary();
+      byTaskClass.set(request.taskClass, summary);
+    }
     summary.requests += 1;
     totals.requests += 1;
 
@@ -194,7 +202,7 @@ export function replay(
       summary.newlyRoutable += 1;
       totals.newlyRoutable += 1;
     } else {
-      summary.unchanged += 1;
+      summary.stillUnroutable += 1;
       totals.stillUnroutable += 1;
     }
 
@@ -207,7 +215,7 @@ export function replay(
     }
   }
 
-  for (const summary of Object.values(byTaskClass)) {
+  for (const summary of byTaskClass.values()) {
     summary.baselineCostUsd = roundTo(summary.baselineCostUsd, 9);
     summary.candidateCostUsd = roundTo(summary.candidateCostUsd, 9);
     summary.costDeltaUsd = roundTo(summary.candidateCostUsd - summary.baselineCostUsd, 9);
@@ -225,9 +233,10 @@ export function replay(
       baselineUsd,
       candidateUsd,
       deltaUsd,
-      deltaPct: baselineUsd === 0 ? 0 : roundTo((deltaUsd / baselineUsd) * 100, 2),
+      // With a zero baseline the percentage is undefined: 0 when nothing rose, null (unbounded) for any increase.
+      deltaPct: baselineUsd === 0 ? (deltaUsd > 0 ? null : 0) : roundTo((deltaUsd / baselineUsd) * 100, 2),
     },
-    byTaskClass: Object.fromEntries(Object.entries(byTaskClass).sort(([a], [b]) => compareStrings(a, b))),
+    byTaskClass: Object.fromEntries([...byTaskClass.entries()].sort(([a], [b]) => compareStrings(a, b))),
     changes,
     newlyUnroutable,
   };
@@ -243,8 +252,12 @@ export function evaluateThresholds(report: ReplayReport, thresholds: ReplayThres
   if (thresholds.maxNewlyUnroutable !== undefined && report.totals.newlyUnroutable > thresholds.maxNewlyUnroutable) {
     violations.push(`newly unroutable requests ${report.totals.newlyUnroutable} exceeds limit ${thresholds.maxNewlyUnroutable}`);
   }
-  if (thresholds.maxCostIncreasePct !== undefined && report.cost.deltaPct > thresholds.maxCostIncreasePct) {
-    violations.push(`estimated cost increase ${report.cost.deltaPct}% exceeds limit ${thresholds.maxCostIncreasePct}%`);
+  if (thresholds.maxCostIncreasePct !== undefined) {
+    if (report.cost.deltaPct === null) {
+      violations.push(`estimated cost rose from a zero baseline to $${report.cost.candidateUsd}: unbounded in percent, exceeds limit ${thresholds.maxCostIncreasePct}%`);
+    } else if (report.cost.deltaPct > thresholds.maxCostIncreasePct) {
+      violations.push(`estimated cost increase ${report.cost.deltaPct}% exceeds limit ${thresholds.maxCostIncreasePct}%`);
+    }
   }
   if (thresholds.maxCostIncreaseUsd !== undefined && report.cost.deltaUsd > thresholds.maxCostIncreaseUsd) {
     violations.push(`estimated cost increase $${report.cost.deltaUsd} exceeds limit $${thresholds.maxCostIncreaseUsd}`);
@@ -272,7 +285,7 @@ export function formatReport(report: ReplayReport, result: ThresholdResult, thre
   lines.push(`Estimated cost over ${report.cost.comparableRequests} comparable requests`);
   lines.push(`  baseline             ${usd(report.cost.baselineUsd)}`);
   lines.push(`  candidate            ${usd(report.cost.candidateUsd)}`);
-  lines.push(`  delta                ${usd(report.cost.deltaUsd)} (${report.cost.deltaPct >= 0 ? '+' : ''}${report.cost.deltaPct}%)`);
+  lines.push(`  delta                ${usd(report.cost.deltaUsd)} (${report.cost.deltaPct === null ? 'n/a, zero baseline' : `${report.cost.deltaPct >= 0 ? '+' : ''}${report.cost.deltaPct}%`})`);
   lines.push('');
   lines.push('Per task class');
   lines.push('  task class        reqs  changed  unroutable      baseline     candidate         delta');

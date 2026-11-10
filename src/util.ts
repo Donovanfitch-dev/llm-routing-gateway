@@ -34,6 +34,19 @@ export function roundTo(value: number, decimals: number): number {
   return Math.round(value * factor) / factor;
 }
 
+/**
+ * Look up a user-supplied key in a plain object without ever reaching
+ * Object.prototype (so "constructor", "toString", "valueOf" are just names).
+ */
+export function ownValue<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
+/** A prototype-less dictionary, safe to fill with arbitrary keys including "__proto__". */
+export function dictionary<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 /** Locale-independent string comparison, used for deterministic tie-breaking. */
 export function compareStrings(a: string, b: string): number {
   if (a < b) return -1;

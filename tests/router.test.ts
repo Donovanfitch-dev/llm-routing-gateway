@@ -194,7 +194,7 @@ describe('budget gate', () => {
     expect(d.status).toBe('rejected');
     expect(d.primary).toBeNull();
     expect(d.reason?.code).toBe('BUDGET_EXCEEDED');
-    expect(d.budget).toMatchObject({ outcome: 'rejected', remainingUsd: 0.5, excludedRoutes: ['aurora/big'] });
+    expect(d.budget).toMatchObject({ outcome: 'rejected', remainingUsd: 0.5, excluded: [{ route: 'aurora/big', estimatedCostUsd: 1, code: 'EXCEEDS_REMAINING_BUDGET' }] });
   });
 
   it('downgrades to the best affordable route when the policy says downgrade', () => {
@@ -203,7 +203,7 @@ describe('budget gate', () => {
     expect(d.status).toBe('routed');
     expect(d.primary).toBe('boreal/small');
     expect(d.fallbacks).toEqual([]);
-    expect(d.budget).toMatchObject({ outcome: 'downgraded', downgradedFrom: 'aurora/big', excludedRoutes: ['aurora/big'] });
+    expect(d.budget).toMatchObject({ outcome: 'downgraded', downgradedFrom: 'aurora/big', excluded: [expect.objectContaining({ route: 'aurora/big' })] });
   });
 
   it('rejects a downgrade when nothing is affordable', () => {
