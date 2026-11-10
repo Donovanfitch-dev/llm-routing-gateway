@@ -411,6 +411,14 @@ npm run build       # tsc to dist/
 
 Layout: `src/` implementation, `tests/` vitest suites, `examples/` catalog, baseline and candidate policies, a sample request, a ~30 record sample log and the script that generates it, `docs/design.md` rationale.
 
+## Related
+
+[claude-execution-playbook](https://github.com/Donovanfitch-dev/claude-execution-playbook) covers
+the same subject from the other side: a decision framework and prompt templates for a person or
+an agent choosing a model, an effort level and an execution topology before a task runs. This
+repository is routing policy as running code; the playbook is routing policy as documentation.
+Neither depends on the other.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
